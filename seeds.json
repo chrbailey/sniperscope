@@ -1,0 +1,21 @@
+{
+  "repos": [
+    "opensuitemcp/opensuitemcp",
+    "dsvantien/netsuite-mcp-server",
+    "OpenAEC-Foundation/Frappe_Claude_Skill_Package",
+    "JoelStell/erp-migration-validation-agent",
+    "oracle/netsuite-suitecloud-sdk",
+    "CDataSoftware/sap-erp-mcp-server-by-cdata",
+    "pantalytics/pan_ai_pro"
+  ],
+  "search_queries": [
+    "netsuite mcp",
+    "sap mcp server",
+    "erp claude",
+    "anthropic erp",
+    "suitescript ai",
+    "netsuite ai agent",
+    "sap llm integration",
+    "erp mcp server"
+  ]
+}
