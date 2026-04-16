@@ -96,7 +96,22 @@ def _try_extract(db: Database, client: GitHubClient, candidate_id: str) -> bool:
     """Run extraction for a candidate. Returns True if extraction ran."""
     try:
         from extract import extract_user
-        extract_user(db, client, candidate_id)
+
+        # Look up the candidate's GitHub login and discovery source
+        candidate = db.conn.execute(
+            "SELECT github_login, discovered_via FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if not candidate:
+            logger.warning("Candidate %s not found in DB — skipping extraction", candidate_id)
+            return False
+
+        extract_user(
+            username=candidate["github_login"],
+            discovered_via=candidate["discovered_via"],
+            db=db,
+            client=client,
+        )
         return True
     except ImportError:
         logger.debug("extract module not available yet — skipping extraction")

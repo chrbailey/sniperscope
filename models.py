@@ -143,6 +143,7 @@ EVIDENCE_CATEGORIES = [
     "collaboration",     # PR behavior, co-authors, team signals
     "dependency",        # frameworks, libraries, tool choices
     "repo_metadata",     # stars, forks, topics, visibility
+    "research_paper",    # arXiv papers, academic publications
 ]
 
 # Domain keywords to detect (no weighting — just counts)

@@ -132,7 +132,7 @@ class TestEvidenceCategories:
         expected = {
             "language", "testing", "commit_pattern", "ci_cd",
             "domain_keyword", "temporal", "collaboration",
-            "dependency", "repo_metadata",
+            "dependency", "repo_metadata", "research_paper",
         }
         assert expected == set(EVIDENCE_CATEGORIES)
 
