@@ -27,7 +27,31 @@ logger = logging.getLogger(__name__)
 # Constants
 # ============================================================================
 
-MAX_CRITIC_ATTEMPTS = 3
+MAX_CRITIC_ATTEMPTS = config.MAX_CRITIC_ATTEMPTS
+
+# Cached Anthropic client — instantiated once per process, not per call.
+_CLIENT: Optional["anthropic.Anthropic"] = None
+
+
+def _get_client() -> "anthropic.Anthropic":
+    """Return a cached Anthropic client, instantiating it on first use."""
+    global _CLIENT
+    if _CLIENT is None:
+        _CLIENT = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    return _CLIENT
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove markdown code fences that LLMs sometimes wrap JSON output in."""
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    lines = text.split("\n")
+    if lines[-1].strip() == "```":
+        lines = lines[1:-1]
+    else:
+        lines = lines[1:]
+    return "\n".join(lines)
 
 # ============================================================================
 # Analysis Prompt — CONSTANT, not dynamically generated
@@ -209,8 +233,6 @@ def _worker_analyze(evidence_json: Dict[str, Any],
     Returns:
         Parsed analysis dict, or a dict with an "error" key on failure.
     """
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
     evidence_str = json.dumps(evidence_json, indent=2)
     user_content = WORKER_USER_TEMPLATE.format(evidence_json=evidence_str)
 
@@ -222,9 +244,9 @@ def _worker_analyze(evidence_json: Dict[str, Any],
         )
 
     try:
-        response = client.messages.create(
+        response = _get_client().messages.create(
             model=config.ANALYSIS_MODEL,
-            max_tokens=4096,
+            max_tokens=config.ANALYSIS_MAX_TOKENS,
             system=WORKER_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
@@ -232,17 +254,7 @@ def _worker_analyze(evidence_json: Dict[str, Any],
         logger.error("Anthropic API error in worker: %s", exc)
         return {"error": str(exc)}
 
-    raw_text = response.content[0].text.strip()
-
-    # Strip markdown code fences if the model wraps its output
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        # Remove first line (```json or ```) and last line (```)
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
-        else:
-            lines = lines[1:]
-        raw_text = "\n".join(lines)
+    raw_text = _strip_code_fences(response.content[0].text)
 
     try:
         return json.loads(raw_text)
@@ -263,8 +275,6 @@ def _critic_review(evidence_json: Dict[str, Any],
     Returns:
         (passed, findings_json_string)
     """
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
     evidence_str = json.dumps(evidence_json, indent=2)
     analysis_str = json.dumps(analysis, indent=2)
     user_content = CRITIC_USER_TEMPLATE.format(
@@ -273,15 +283,14 @@ def _critic_review(evidence_json: Dict[str, Any],
     )
 
     try:
-        response = client.messages.create(
+        response = _get_client().messages.create(
             model=config.ANALYSIS_MODEL,
-            max_tokens=4096,
+            max_tokens=config.ANALYSIS_MAX_TOKENS,
             system=CRITIC_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
     except anthropic.APIError as exc:
         logger.error("Anthropic API error in critic: %s", exc)
-        # Critic failure = treat as not passed, force human review
         return False, json.dumps({
             "passed": False,
             "findings": [{"category": "api_error", "severity": "high",
@@ -289,16 +298,7 @@ def _critic_review(evidence_json: Dict[str, Any],
             "summary": "Critic could not execute due to API error.",
         })
 
-    raw_text = response.content[0].text.strip()
-
-    # Strip markdown code fences
-    if raw_text.startswith("```"):
-        lines = raw_text.split("\n")
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
-        else:
-            lines = lines[1:]
-        raw_text = "\n".join(lines)
+    raw_text = _strip_code_fences(response.content[0].text)
 
     try:
         review = json.loads(raw_text)

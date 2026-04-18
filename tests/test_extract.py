@@ -344,7 +344,8 @@ class TestExtractCiFacts:
     def test_no_ci_detected(self):
         repos = [_make_repo("testuser/repo1")]
         client = MagicMock()
-        client.check_path_exists.return_value = False
+        # No workflows directory → list_directory returns []
+        client.list_directory.return_value = []
 
         facts, ci_by_repo = extract_ci_facts("cid", "run", repos, client)
 
@@ -358,8 +359,11 @@ class TestExtractCiFacts:
             _make_repo("testuser/repo2"),
         ]
         client = MagicMock()
-        client.check_path_exists.side_effect = [True, False]
-        client.list_directory.return_value = [{"type": "file", "name": "ci.yml"}]
+        # repo1 has workflows, repo2 does not
+        client.list_directory.side_effect = [
+            [{"type": "file", "name": "ci.yml"}],
+            [],
+        ]
 
         facts, _ = extract_ci_facts("cid", "run", repos, client)
 

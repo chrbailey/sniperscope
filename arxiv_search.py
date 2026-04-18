@@ -283,10 +283,15 @@ def _make_author_candidate(
         )
     else:
         # No GitHub profile — create a placeholder candidate.
-        # Use a negative hash as synthetic github_id to avoid collision.
-        synthetic_id = -(abs(hash(author_name)) % (10**9))
+        # Deterministic synthetic github_id: sha256(name)[:8] as signed negative int.
+        # Using hashlib instead of hash() — the builtin is non-deterministic
+        # across processes (PYTHONHASHSEED) and would give the same author
+        # different IDs on successive runs.
+        import hashlib
+        digest = hashlib.sha256(author_name.encode("utf-8")).hexdigest()
+        synthetic_id = -int(digest[:12], 16) % (10**15)
         return Candidate(
-            github_id=synthetic_id,
+            github_id=-synthetic_id if synthetic_id > 0 else synthetic_id,
             github_login=f"arxiv:{author_name.lower().replace(' ', '_')}",
             display_name=author_name,
             discovered_via=f"arxiv:{arxiv_id}",

@@ -297,25 +297,17 @@ def extract_testing_facts(
         "total_source_files", total_source_files, "number", user_source,
     ))
 
-    # Commits touching test files
+    # Commits touching test files — message-based heuristic.
+    # The GitHub list-commits endpoint does not return the `files` array
+    # (that requires per-commit get_commit_detail which is N+1), so we
+    # rely on commit messages mentioning "test".
     total_commits = 0
     test_touching_commits = 0
     for full_name, commits in commits_by_repo.items():
         for commit in commits:
             total_commits += 1
             msg = (commit.get("commit", {}).get("message", "") or "").lower()
-            # Heuristic: commit message references "test" or files field includes test paths
-            files = commit.get("files", [])
-            if files:
-                for f in files:
-                    fname = f.get("filename", "")
-                    if _is_test_file(fname.split("/")[-1]) or any(
-                        d in fname.lower() for d in TEST_DIR_NAMES
-                    ):
-                        test_touching_commits += 1
-                        break
-            elif "test" in msg:
-                # Fallback: if no files in commit data, check message
+            if "test" in msg:
                 test_touching_commits += 1
 
     if total_commits > 0:
@@ -449,10 +441,13 @@ def extract_ci_facts(
         has_ci = False
         workflow_count = 0
 
+        # Single API call: list the workflows directory directly. If it
+        # doesn't exist, list_directory returns []. Saves one check_path_exists
+        # call per repo (N extra calls across N repos).
         try:
-            if client.check_path_exists(full_name, ".github/workflows"):
+            entries = client.list_directory(full_name, ".github/workflows")
+            if entries:
                 has_ci = True
-                entries = client.list_directory(full_name, ".github/workflows")
                 workflow_count = sum(
                     1 for e in entries
                     if e.get("type") == "file" and (

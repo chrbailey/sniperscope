@@ -13,12 +13,14 @@ from typing import Any, Dict, List, Optional, Set
 import config
 from db import Database
 from github_client import GitHubClient, GitHubRateLimitError
-from models import Candidate
+from models import Candidate, DOMAIN_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
-SEARCH_SLEEP_SECONDS = 1  # search API is 10 req/min
-RE_EXTRACT_DAYS = 7  # skip extraction if done within this window
+# Search API budget: GitHub allows 10 req/min. One second is the minimum
+# spacing we use; a larger value lives in config for production tuning.
+SEARCH_SLEEP_SECONDS = 1
+RE_EXTRACT_DAYS = config.RE_EXTRACT_DAYS
 
 
 # ============================================================================
@@ -94,18 +96,20 @@ def _contributor_to_candidate(
 
 def _try_extract(db: Database, client: GitHubClient, candidate_id: str) -> bool:
     """Run extraction for a candidate. Returns True if extraction ran."""
+    # Imported here to avoid a circular-import hazard: extract.py itself
+    # does not import crawl, so this is safe, but keeping the import local
+    # documents that the dependency is one-way.
+    from extract import extract_user
+
+    candidate = db.conn.execute(
+        "SELECT github_login, discovered_via FROM candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    if candidate is None:
+        logger.warning("Candidate %s not found in DB — skipping extraction", candidate_id)
+        return False
+
     try:
-        from extract import extract_user
-
-        # Look up the candidate's GitHub login and discovery source
-        candidate = db.conn.execute(
-            "SELECT github_login, discovered_via FROM candidates WHERE id = ?",
-            (candidate_id,),
-        ).fetchone()
-        if not candidate:
-            logger.warning("Candidate %s not found in DB — skipping extraction", candidate_id)
-            return False
-
         extract_user(
             username=candidate["github_login"],
             discovered_via=candidate["discovered_via"],
@@ -113,12 +117,16 @@ def _try_extract(db: Database, client: GitHubClient, candidate_id: str) -> bool:
             client=client,
         )
         return True
-    except ImportError:
-        logger.debug("extract module not available yet — skipping extraction")
-        return False
     except Exception:
         logger.exception("Extraction failed for candidate %s", candidate_id)
         return False
+
+
+# Domain labels considered "ERP" vs "AI" for seed-matching heuristic.
+# The actual keyword lists live in models.DOMAIN_KEYWORDS; this mapping
+# says which domain categories count as "ERP" vs "AI" for this filter.
+_ERP_DOMAINS = {"erp", "netsuite", "sap", "oracle", "workday", "salesforce"}
+_AI_DOMAINS = {"anthropic", "mcp", "ai_agent"}
 
 
 def _repo_matches_erp_ai(
@@ -126,15 +134,14 @@ def _repo_matches_erp_ai(
     description: Optional[str],
     topics: Optional[List[str]],
 ) -> bool:
-    """Check if a repo looks ERP + AI related based on name/desc/topics."""
-    erp_terms = {
-        "erp", "netsuite", "suitescript", "sap", "abap", "fiori",
-        "oracle erp", "workday", "peoplesoft", "jde",
-    }
-    ai_terms = {
-        "mcp", "claude", "anthropic", "ai", "agent", "llm",
-        "model context protocol",
-    }
+    """Check if a repo looks ERP + AI related based on name/desc/topics.
+
+    Derives keyword lists from models.DOMAIN_KEYWORDS so we have a single
+    source of truth; adding a new ERP keyword in models.py automatically
+    extends this filter.
+    """
+    erp_terms = {term for domain in _ERP_DOMAINS for term in DOMAIN_KEYWORDS.get(domain, [])}
+    ai_terms = {term for domain in _AI_DOMAINS for term in DOMAIN_KEYWORDS.get(domain, [])}
 
     searchable = " ".join(
         filter(None, [name.lower(), (description or "").lower()])
@@ -144,7 +151,7 @@ def _repo_matches_erp_ai(
 
     has_erp = any(term in searchable for term in erp_terms)
     has_ai = any(term in searchable for term in ai_terms)
-    return has_erp or has_ai  # either signal is enough for seeds
+    return has_erp or has_ai  # either signal qualifies a repo for seeds
 
 
 # ============================================================================

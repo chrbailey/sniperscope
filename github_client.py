@@ -42,7 +42,7 @@ class GitHubClient:
                 "Rate limit low (%d remaining). Waiting %d seconds.",
                 remaining, wait_seconds
             )
-            time.sleep(min(wait_seconds, 60))  # cap wait at 60s
+            time.sleep(min(wait_seconds, config.GITHUB_RATE_LIMIT_MAX_WAIT))
 
     def _get(self, url: str, params: Optional[Dict[str, Any]] = None) -> requests.Response:
         """Make a GET request with rate limit handling."""
@@ -235,7 +235,7 @@ class GitHubClient:
             results.extend(items)
             if len(items) < 30:
                 break
-            time.sleep(2)  # search API rate limit: 10 req/min
+            time.sleep(config.GITHUB_SEARCH_API_SLEEP_SECONDS)  # search API: 10 req/min
         return results[:max_results]
 
     def search_users(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
