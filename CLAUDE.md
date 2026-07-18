@@ -32,30 +32,38 @@ Evidence-based talent radar for the Claude + ERP intersection.
 ## File Structure
 
 ```
-extract.py      — GitHub API → evidence facts (deterministic, no LLM)
-analyze.py      — Evidence JSON → Claude API → constrained assessment
-crawl.py        — Seed repos → contributor discovery → extraction trigger
-seeds.json      — Initial repo seed list
-schema.sql      — Supabase/SQLite schema
-db.py           — Database abstraction (Supabase + SQLite fallback)
-github_client.py — GitHub API wrapper with rate limiting
-models.py       — Pydantic models for evidence and analysis
-config.py       — Environment config (.env based)
-tests/          — pytest suite
+pyproject.toml       — Package metadata, dependencies, console scripts
+seeds.json           — Initial repo seed list
+sniperscope/
+  extract.py         — GitHub API → evidence facts (deterministic, no LLM)
+  analyze.py         — Evidence JSON → Claude API → constrained assessment
+  crawl.py           — Seed repos → contributor discovery → extraction trigger
+  arxiv.py           — arXiv paper search + GitHub cross-reference
+  schema.sql         — Supabase/SQLite schema (append-only triggers)
+  db.py              — SQLite evidence store (Supabase planned)
+  github.py          — GitHub API wrapper with rate limiting
+  models.py          — Pydantic models for evidence and analysis
+  config.py          — Environment config (.env based)
+tests/               — pytest suite (local mocks, no network)
 ```
 
 ## Running
 
 ```bash
+pip install -e ".[dev]"
+
 # Extract one user
-python extract.py --user chrbailey
+sniperscope-extract --user chrbailey
 
 # Extract all contributors from seed repos
-python crawl.py --seeds seeds.json
+sniperscope-crawl --seeds
 
 # Analyze unanalyzed candidates
-python analyze.py --unanalyzed
+sniperscope-analyze --unanalyzed
 
 # Run tests
 python -m pytest tests/ -v
 ```
+
+Each console script is a separate program — extraction and analysis never
+run in the same process. `python -m sniperscope.extract` etc. also work.

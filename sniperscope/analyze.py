@@ -12,20 +12,15 @@ import json
 import logging
 import sys
 import time
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import anthropic
 
-import config
-from db import Database
-from models import AnalysisRun
+from sniperscope import config
+from sniperscope.db import Database
+from sniperscope.models import AnalysisRun, utc_now_iso
 
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# Constants
-# ============================================================================
 
 MAX_CRITIC_ATTEMPTS = config.MAX_CRITIC_ATTEMPTS
 
@@ -34,7 +29,6 @@ _CLIENT: Optional["anthropic.Anthropic"] = None
 
 
 def _get_client() -> "anthropic.Anthropic":
-    """Return a cached Anthropic client, instantiating it on first use."""
     global _CLIENT
     if _CLIENT is None:
         _CLIENT = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
@@ -53,9 +47,17 @@ def _strip_code_fences(text: str) -> str:
         lines = lines[1:]
     return "\n".join(lines)
 
+
+def _compute_prompt_hash(prompt: str) -> str:
+    """SHA-256 of the analysis prompt, stored for reproducibility."""
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
 # ============================================================================
-# Analysis Prompt — CONSTANT, not dynamically generated
-# This is the anti-flattery wall. Every constraint here is deliberate.
+# Prompts — CONSTANT, not dynamically generated.
+# This is the anti-flattery wall. Every constraint here is deliberate, and
+# the text must not drift casually: prompt_hash ties stored analyses to the
+# exact prompt that produced them.
 # ============================================================================
 
 WORKER_SYSTEM_PROMPT = """\
@@ -209,12 +211,29 @@ Analysis to review:
 
 
 # ============================================================================
-# Prompt hashing
+# Claude call plumbing (shared by worker and critic)
 # ============================================================================
 
-def _compute_prompt_hash(prompt: str) -> str:
-    """SHA-256 hash of the analysis prompt for reproducibility."""
-    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+def _call_json(system_prompt: str, user_content: str) -> Tuple[Optional[Dict[str, Any]], Optional[str], str]:
+    """Call Claude and parse the response as JSON.
+
+    Returns (parsed, error, raw_text). Exactly one of parsed/error is set.
+    """
+    try:
+        response = _get_client().messages.create(
+            model=config.ANALYSIS_MODEL,
+            max_tokens=config.ANALYSIS_MAX_TOKENS,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_content}],
+        )
+    except anthropic.APIError as exc:
+        return None, str(exc), ""
+
+    raw_text = _strip_code_fences(response.content[0].text)
+    try:
+        return json.loads(raw_text), None, raw_text
+    except json.JSONDecodeError:
+        return None, "invalid JSON", raw_text
 
 
 # ============================================================================
@@ -223,97 +242,66 @@ def _compute_prompt_hash(prompt: str) -> str:
 
 def _worker_analyze(evidence_json: Dict[str, Any],
                     critic_feedback: Optional[str] = None) -> Dict[str, Any]:
-    """Worker: generate analysis from evidence. Returns analysis dict.
+    """Generate an analysis from evidence.
 
-    Args:
-        evidence_json: The structured evidence blob for one candidate.
-        critic_feedback: If retrying, the critic's findings from the
-            previous attempt, so the worker can correct its output.
-
-    Returns:
-        Parsed analysis dict, or a dict with an "error" key on failure.
+    If retrying, critic_feedback carries the previous attempt's findings so
+    the worker can correct its output. Returns the parsed analysis dict, or
+    a dict with an "error" key on failure.
     """
-    evidence_str = json.dumps(evidence_json, indent=2)
-    user_content = WORKER_USER_TEMPLATE.format(evidence_json=evidence_str)
+    user_content = WORKER_USER_TEMPLATE.format(
+        evidence_json=json.dumps(evidence_json, indent=2))
 
     if critic_feedback:
         user_content += (
             "\n\nYour previous analysis was rejected by the critic. "
-            "Fix the following issues and resubmit:\n\n"
-            + critic_feedback
+            "Fix the following issues and resubmit:\n\n" + critic_feedback
         )
 
-    try:
-        response = _get_client().messages.create(
-            model=config.ANALYSIS_MODEL,
-            max_tokens=config.ANALYSIS_MAX_TOKENS,
-            system=WORKER_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
-    except anthropic.APIError as exc:
-        logger.error("Anthropic API error in worker: %s", exc)
-        return {"error": str(exc)}
-
-    raw_text = _strip_code_fences(response.content[0].text)
-
-    try:
-        return json.loads(raw_text)
-    except json.JSONDecodeError as exc:
-        logger.error("Worker returned invalid JSON: %s", exc)
+    parsed, error, raw_text = _call_json(WORKER_SYSTEM_PROMPT, user_content)
+    if parsed is not None:
+        return parsed
+    if raw_text:
+        logger.error("Worker returned invalid JSON")
         logger.debug("Raw worker output: %s", raw_text[:500])
         return {"error": "Worker returned invalid JSON", "raw": raw_text[:1000]}
+    logger.error("Anthropic API error in worker: %s", error)
+    return {"error": error}
 
 
 # ============================================================================
 # Critic — reviews analysis against evidence
 # ============================================================================
 
+def _critic_failure(category: str, detail: str, summary: str) -> str:
+    return json.dumps({
+        "passed": False,
+        "findings": [{"category": category, "severity": "high",
+                      "detail": detail, "location": "critic"}],
+        "summary": summary,
+    })
+
+
 def _critic_review(evidence_json: Dict[str, Any],
                    analysis: Dict[str, Any]) -> Tuple[bool, str]:
-    """Critic: review analysis against evidence.
-
-    Returns:
-        (passed, findings_json_string)
-    """
-    evidence_str = json.dumps(evidence_json, indent=2)
-    analysis_str = json.dumps(analysis, indent=2)
+    """Review an analysis against the evidence. Returns (passed, findings_json)."""
     user_content = CRITIC_USER_TEMPLATE.format(
-        evidence_json=evidence_str,
-        analysis_json=analysis_str,
+        evidence_json=json.dumps(evidence_json, indent=2),
+        analysis_json=json.dumps(analysis, indent=2),
     )
 
-    try:
-        response = _get_client().messages.create(
-            model=config.ANALYSIS_MODEL,
-            max_tokens=config.ANALYSIS_MAX_TOKENS,
-            system=CRITIC_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
-    except anthropic.APIError as exc:
-        logger.error("Anthropic API error in critic: %s", exc)
-        return False, json.dumps({
-            "passed": False,
-            "findings": [{"category": "api_error", "severity": "high",
-                          "detail": str(exc), "location": "critic"}],
-            "summary": "Critic could not execute due to API error.",
-        })
+    review, error, raw_text = _call_json(CRITIC_SYSTEM_PROMPT, user_content)
+    if review is None:
+        if raw_text:
+            logger.error("Critic returned invalid JSON, treating as failure")
+            return False, _critic_failure(
+                "schema", "Critic output was not valid JSON",
+                "Critic output could not be parsed.")
+        logger.error("Anthropic API error in critic: %s", error)
+        return False, _critic_failure(
+            "api_error", error or "unknown",
+            "Critic could not execute due to API error.")
 
-    raw_text = _strip_code_fences(response.content[0].text)
-
-    try:
-        review = json.loads(raw_text)
-    except json.JSONDecodeError:
-        logger.error("Critic returned invalid JSON, treating as failure")
-        return False, json.dumps({
-            "passed": False,
-            "findings": [{"category": "schema", "severity": "high",
-                          "detail": "Critic output was not valid JSON",
-                          "location": "critic"}],
-            "summary": "Critic output could not be parsed.",
-        })
-
-    passed = review.get("passed", False)
-    return passed, json.dumps(review)
+    return review.get("passed", False), json.dumps(review)
 
 
 # ============================================================================
@@ -321,22 +309,20 @@ def _critic_review(evidence_json: Dict[str, Any],
 # ============================================================================
 
 def analyze_candidate(candidate_id: str, db: Database) -> AnalysisRun:
-    """Run full analysis with critic loop for one candidate.
+    """Run the full critic-validated analysis for one candidate.
 
-    1. Worker generates analysis from evidence JSON.
+    1. Worker generates an analysis from the evidence JSON.
     2. Critic reviews for unsupported claims, flattery, narrative bias.
-    3. Ralph decides: PASS -> store, FAIL -> retry with feedback (max 3).
-       After 3 failures, store with critic_passed=False for human review.
-
-    Returns:
-        The AnalysisRun that was stored in the database.
+    3. Ralph decides: PASS -> store; FAIL -> retry with feedback (max 3).
+       After 3 failures, the analysis is stored with critic_passed=False
+       for human review.
     """
     evidence_json = db.get_evidence_json(candidate_id)
     if not evidence_json:
         logger.error("No evidence found for candidate %s", candidate_id)
         run = AnalysisRun(
             candidate_id=candidate_id,
-            evidence_snapshot_at=datetime.utcnow().isoformat(),
+            evidence_snapshot_at=utc_now_iso(),
             evidence_fact_count=0,
             analysis_output_json=json.dumps({"error": "No evidence found"}),
             model_used=config.ANALYSIS_MODEL,
@@ -349,48 +335,37 @@ def analyze_candidate(candidate_id: str, db: Database) -> AnalysisRun:
         return run
 
     evidence_count = evidence_json.get("metadata", {}).get("total_facts", 0)
-    snapshot_at = evidence_json.get("metadata", {}).get("extracted_at")
-    if not snapshot_at:
-        snapshot_at = datetime.utcnow().isoformat()
+    snapshot_at = evidence_json.get("metadata", {}).get("extracted_at") or utc_now_iso()
 
-    # Compute prompt hash from the full prompt that will be sent
-    evidence_str = json.dumps(evidence_json, indent=2)
     full_prompt = WORKER_SYSTEM_PROMPT + WORKER_USER_TEMPLATE.format(
-        evidence_json=evidence_str
-    )
+        evidence_json=json.dumps(evidence_json, indent=2))
     prompt_hash = _compute_prompt_hash(full_prompt)
 
     login = evidence_json.get("candidate", {}).get("github_login", candidate_id)
     logger.info("Analyzing candidate %s (%d facts)", login, evidence_count)
 
-    critic_feedback = None  # type: Optional[str]
-    last_analysis = {}  # type: Dict[str, Any]
-    last_critic_findings = None  # type: Optional[str]
+    critic_feedback: Optional[str] = None
+    last_analysis: Dict[str, Any] = {}
+    last_critic_findings: Optional[str] = None
     passed = False
 
     for attempt in range(1, MAX_CRITIC_ATTEMPTS + 1):
         logger.info("  Attempt %d/%d — Worker generating analysis",
-                     attempt, MAX_CRITIC_ATTEMPTS)
-
+                    attempt, MAX_CRITIC_ATTEMPTS)
         analysis = _worker_analyze(evidence_json, critic_feedback)
         last_analysis = analysis
 
         if "error" in analysis:
             logger.error("  Worker failed: %s", analysis["error"])
-            last_critic_findings = json.dumps({
-                "passed": False,
-                "findings": [{"category": "worker_error", "severity": "high",
-                              "detail": analysis["error"],
-                              "location": "worker"}],
-                "summary": "Worker failed to produce valid analysis.",
-            })
-            # Don't retry worker errors with critic feedback — the issue
-            # is structural, not content-based
+            last_critic_findings = _critic_failure(
+                "worker_error", analysis["error"],
+                "Worker failed to produce valid analysis.")
+            # Worker errors are structural, not content-based — no retry
+            # with critic feedback will fix them.
             break
 
         logger.info("  Attempt %d/%d — Critic reviewing analysis",
-                     attempt, MAX_CRITIC_ATTEMPTS)
-
+                    attempt, MAX_CRITIC_ATTEMPTS)
         passed, findings_json = _critic_review(evidence_json, analysis)
         last_critic_findings = findings_json
 
@@ -398,24 +373,8 @@ def analyze_candidate(candidate_id: str, db: Database) -> AnalysisRun:
             logger.info("  Critic PASSED on attempt %d", attempt)
             break
 
-        # Ralph says: retry with critic feedback
         logger.info("  Critic FAILED on attempt %d — retrying", attempt)
-        try:
-            findings = json.loads(findings_json)
-            # Build targeted feedback from findings
-            feedback_lines = []  # type: List[str]
-            for f in findings.get("findings", []):
-                feedback_lines.append(
-                    "[{severity}] {category}: {detail} (in: {location})".format(
-                        severity=f.get("severity", "?"),
-                        category=f.get("category", "?"),
-                        detail=f.get("detail", "?"),
-                        location=f.get("location", "?"),
-                    )
-                )
-            critic_feedback = "\n".join(feedback_lines)
-        except (json.JSONDecodeError, KeyError):
-            critic_feedback = findings_json
+        critic_feedback = _format_feedback(findings_json)
 
     if not passed:
         logger.warning(
@@ -437,11 +396,26 @@ def analyze_candidate(candidate_id: str, db: Database) -> AnalysisRun:
     )
     db.insert_analysis_run(run)
 
-    logger.info(
-        "  Stored analysis run %s (passed=%s, attempts=%d)",
-        run.id, passed, attempt,
-    )
+    logger.info("  Stored analysis run %s (passed=%s, attempts=%d)",
+                run.id, passed, attempt)
     return run
+
+
+def _format_feedback(findings_json: str) -> str:
+    """Turn critic findings into targeted retry feedback for the worker."""
+    try:
+        findings = json.loads(findings_json)
+        return "\n".join(
+            "[{severity}] {category}: {detail} (in: {location})".format(
+                severity=f.get("severity", "?"),
+                category=f.get("category", "?"),
+                detail=f.get("detail", "?"),
+                location=f.get("location", "?"),
+            )
+            for f in findings.get("findings", [])
+        )
+    except (json.JSONDecodeError, KeyError):
+        return findings_json
 
 
 # ============================================================================
@@ -452,25 +426,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sniperscope — evidence-based candidate analysis"
     )
-    parser.add_argument(
-        "--candidate-id",
-        help="Analyze one specific candidate by ID",
-    )
-    parser.add_argument(
-        "--unanalyzed",
-        action="store_true",
-        help="Analyze all candidates that have evidence but no analysis",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print evidence JSON without calling Claude",
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    parser.add_argument("--candidate-id",
+                        help="Analyze one specific candidate by ID")
+    parser.add_argument("--unanalyzed", action="store_true",
+                        help="Analyze all candidates that have evidence but no analysis")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print evidence JSON without calling Claude")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable debug logging")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -485,19 +448,14 @@ def main() -> None:
         logger.error("ANTHROPIC_API_KEY not set. Add it to .env or environment.")
         sys.exit(1)
 
-    db = Database()
-
-    try:
+    with Database() as db:
         if args.candidate_id:
             _run_single(db, args.candidate_id, args.dry_run)
         elif args.unanalyzed:
             _run_unanalyzed(db, args.dry_run)
-    finally:
-        db.close()
 
 
 def _run_single(db: Database, candidate_id: str, dry_run: bool) -> None:
-    """Analyze a single candidate."""
     evidence = db.get_evidence_json(candidate_id)
     if not evidence:
         logger.error("No evidence found for candidate %s", candidate_id)
@@ -512,16 +470,12 @@ def _run_single(db: Database, candidate_id: str, dry_run: bool) -> None:
 
     start = time.monotonic()
     run = analyze_candidate(candidate_id, db)
-    elapsed = time.monotonic() - start
-
-    logger.info(
-        "Completed analysis for %s in %.1fs — passed=%s, attempts=%d",
-        login, elapsed, run.critic_passed, run.critic_attempts,
-    )
+    logger.info("Completed analysis for %s in %.1fs — passed=%s, attempts=%d",
+                login, time.monotonic() - start, run.critic_passed,
+                run.critic_attempts)
 
 
 def _run_unanalyzed(db: Database, dry_run: bool) -> None:
-    """Analyze all candidates with evidence but no analysis."""
     candidates = db.get_unanalyzed_candidates()
     if not candidates:
         logger.info("No unanalyzed candidates found")
@@ -542,13 +496,9 @@ def _run_unanalyzed(db: Database, dry_run: bool) -> None:
 
         start = time.monotonic()
         run = analyze_candidate(cid, db)
-        elapsed = time.monotonic() - start
-
-        logger.info(
-            "  [%d/%d] %s — %.1fs, passed=%s, attempts=%d",
-            i, len(candidates), login, elapsed,
-            run.critic_passed, run.critic_attempts,
-        )
+        logger.info("  [%d/%d] %s — %.1fs, passed=%s, attempts=%d",
+                    i, len(candidates), login, time.monotonic() - start,
+                    run.critic_passed, run.critic_attempts)
 
 
 if __name__ == "__main__":

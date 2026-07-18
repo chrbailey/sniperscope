@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from extract import (
+from sniperscope.extract import (
     _fact,
     _is_test_file,
     _is_source_file,
@@ -26,7 +26,7 @@ from extract import (
     extract_user,
     CONVENTIONAL_COMMIT_RE,
 )
-from models import EvidenceFact
+from sniperscope.models import EvidenceFact
 
 
 # ============================================================================

@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from models import (
+from sniperscope.models import (
     Candidate,
     EvidenceFact,
     EVIDENCE_CATEGORIES,

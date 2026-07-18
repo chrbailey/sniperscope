@@ -1,17 +1,12 @@
 """Shared fixtures for Sniperscope test suite."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Ensure project root is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 import json
+
 import pytest
 
-from db import Database
-from models import Candidate, EvidenceFact, ExtractionRun, Repo
+from sniperscope.db import Database
+from sniperscope.models import Candidate, EvidenceFact, ExtractionRun, Repo
 
 
 # ============================================================================

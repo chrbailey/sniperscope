@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -12,9 +12,14 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
-# ============================================================================
-# Candidate
-# ============================================================================
+def utc_now_iso() -> str:
+    """Naive-UTC ISO-8601 timestamp.
+
+    Kept naive (no offset suffix) so new rows sort and compare correctly
+    against timestamps already stored by earlier versions.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
 
 class Candidate(BaseModel):
     id: str = Field(default_factory=new_id)
@@ -31,14 +36,12 @@ class Candidate(BaseModel):
     following: Optional[int] = None
     github_created_at: Optional[str] = None
     discovered_via: str
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=utc_now_iso)
 
-
-# ============================================================================
-# Repo
-# ============================================================================
 
 class Repo(BaseModel):
+    """Per-candidate repo snapshot. Mutable — refreshed on re-extraction."""
+
     id: str = Field(default_factory=new_id)
     candidate_id: str
     github_repo_id: int
@@ -60,45 +63,35 @@ class Repo(BaseModel):
     license: Optional[str] = None
     default_branch: Optional[str] = None
     extraction_run_id: str = ""
-    extracted_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    extracted_at: str = Field(default_factory=utc_now_iso)
 
-
-# ============================================================================
-# Evidence Fact (the core unit — append-only)
-# ============================================================================
 
 class EvidenceFact(BaseModel):
+    """The core unit of evidence. Append-only at the database layer."""
+
     id: str = Field(default_factory=new_id)
     candidate_id: str
-    category: str       # "commit_pattern", "testing", "domain_keyword", etc.
-    fact_key: str       # "test_file_ratio", "commit_frequency_weekly_avg"
+    category: str       # "commit_pattern", "testing", "domain_keyword", ...
+    fact_key: str       # "test_file_ratio", "commits_per_week_avg", ...
     fact_value: str     # "0.34", "12.5", "true"
     fact_type: str      # "number", "string", "boolean", "json"
-    source: str         # "github:repo:chrbailey/promptspeak-mcp-server"
+    source: str         # "github:repo:owner/name", "github:user:login", "arxiv:id"
     extraction_run_id: str
-    extracted_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    extracted_at: str = Field(default_factory=utc_now_iso)
 
-
-# ============================================================================
-# Extraction Run
-# ============================================================================
 
 class ExtractionRun(BaseModel):
     id: str = Field(default_factory=new_id)
     candidate_id: Optional[str] = None
-    trigger_type: str   # "initial", "incremental", "manual_reverify", "seed_crawl"
+    trigger_type: str   # "initial", "incremental", "manual_reverify", "seed_crawl", "arxiv_search"
     repos_scanned: int = 0
     facts_extracted: int = 0
     duration_ms: Optional[int] = None
-    started_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    started_at: str = Field(default_factory=utc_now_iso)
     completed_at: Optional[str] = None
     status: str = "running"
     error_message: Optional[str] = None
 
-
-# ============================================================================
-# Analysis Run
-# ============================================================================
 
 class AnalysisRun(BaseModel):
     id: str = Field(default_factory=new_id)
@@ -111,14 +104,12 @@ class AnalysisRun(BaseModel):
     critic_passed: bool
     critic_findings_json: Optional[str] = None
     critic_attempts: int = 1
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=utc_now_iso)
 
-
-# ============================================================================
-# Outcome (training sidecar)
-# ============================================================================
 
 class Outcome(BaseModel):
+    """Training sidecar — the human decision, recorded after the fact."""
+
     id: str = Field(default_factory=new_id)
     candidate_id: str
     decision: Optional[str] = None
@@ -126,12 +117,8 @@ class Outcome(BaseModel):
     decision_date: Optional[str] = None
     quality_rating: Optional[str] = None
     notes: Optional[str] = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=utc_now_iso)
 
-
-# ============================================================================
-# Evidence categories (taxonomy)
-# ============================================================================
 
 EVIDENCE_CATEGORIES = [
     "language",          # programming languages used
@@ -146,7 +133,7 @@ EVIDENCE_CATEGORIES = [
     "research_paper",    # arXiv papers, academic publications
 ]
 
-# Domain keywords to detect (no weighting — just counts)
+# Domain keywords to detect (no weighting — just counts).
 # IMPORTANT: These are for COUNTING occurrences in evidence only.
 # They must NEVER be used to filter or exclude candidates.
 # The rubric-free principle requires that what matters is learned

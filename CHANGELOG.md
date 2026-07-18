@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- Restructured the flat script layout into an installable `sniperscope` package with `pyproject.toml` and one console script per program (`sniperscope-extract`, `sniperscope-analyze`, `sniperscope-crawl`, `sniperscope-arxiv`); extraction and analysis remain physically separate executables
+- `db.py` rewritten: INSERT/UPSERT statements are generated from a single per-table column list (SQLite `ON CONFLICT` upserts) instead of hand-maintained duplicates; `Database` is now a context manager
+- All raw SQL moved behind `Database` — `extract.py` and `crawl.py` no longer touch `db.conn` directly (new `set_extraction_run_candidate`, `has_recent_extraction`, `update_seed_crawl_stats`, `get_candidate` methods)
+- `crawl.py`: the three duplicated contributor-ingest loops collapsed into one `_ingest_users` helper
+- `analyze.py`: worker and critic share one `_call_json` helper; prompt text is byte-identical to preserve `prompt_hash` reproducibility
+- `arxiv.py` (renamed from `arxiv_search.py`): author resolution flattened into `_resolve_author`; synthetic IDs unchanged
+- `extract.py`: shared `_user_source`/`_parse_iso` helpers; removed a redundant GitHub profile fetch per extraction (one fewer API call per user)
+- Replaced deprecated `datetime.utcnow()` with a single timezone-aware `utc_now_iso()` helper (stored timestamp format unchanged)
+- Type comments (`# type:`) replaced with real annotations throughout
+- Tests no longer need `sys.path` hacks; CI installs the package via `pip install -e ".[dev]"`
+
+### Removed
+- `requirements.txt` (dependencies now declared in `pyproject.toml`)
+- Unused `supabase` and `pytest-asyncio` dependencies (nothing imported them)
+
 ### Added
 - CI via GitHub Actions (Python 3.9, 3.10, 3.11, 3.12)
 - CONTRIBUTING.md, SECURITY.md, CHANGELOG.md

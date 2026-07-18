@@ -5,8 +5,8 @@ import sqlite3
 
 import pytest
 
-from db import Database
-from models import Candidate, EvidenceFact, ExtractionRun, Repo
+from sniperscope.db import Database
+from sniperscope.models import Candidate, EvidenceFact, ExtractionRun, Repo
 
 
 # ============================================================================
@@ -212,7 +212,7 @@ class TestUnanalyzedCandidates:
 
     def test_get_unanalyzed_excludes_analyzed(self, db, sample_candidate, make_fact):
         """Candidates that already have an analysis_run should NOT appear."""
-        from models import AnalysisRun
+        from sniperscope.models import AnalysisRun
 
         cid = db.upsert_candidate(sample_candidate)
         run_id = "run-analyzed-001"
