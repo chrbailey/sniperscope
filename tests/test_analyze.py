@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import analyze  # noqa: E402
-from db import Database  # noqa: E402
-from models import Candidate, EvidenceFact, ExtractionRun  # noqa: E402
+from sniperscope import analyze
+from sniperscope.db import Database  # noqa: E402
+from sniperscope.models import Candidate, EvidenceFact, ExtractionRun  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +29,7 @@ def _reset_cached_client():
 @pytest.fixture
 def db_with_candidate(tmp_path):
     db_path = tmp_path / "test.db"
-    import config
+    from sniperscope import config
     original = config.SQLITE_PATH
     config.SQLITE_PATH = str(db_path)
     database = Database(str(db_path))
@@ -116,7 +113,7 @@ class TestWorkerAnalyze:
             })
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             result = analyze._worker_analyze({"evidence": {}, "candidate": {}})
 
         assert "error" not in result
@@ -129,7 +126,7 @@ class TestWorkerAnalyze:
             "```json\n" + json.dumps({"summary": "fenced"}) + "\n```"
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             result = analyze._worker_analyze({"evidence": {}})
 
         assert result["summary"] == "fenced"
@@ -140,7 +137,7 @@ class TestWorkerAnalyze:
             "this is not JSON"
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             result = analyze._worker_analyze({"evidence": {}})
 
         assert "error" in result
@@ -155,7 +152,7 @@ class TestWorkerAnalyze:
 
         mock_client.messages.create.side_effect = capture
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             analyze._worker_analyze({"evidence": {}},
                                      critic_feedback="[high] flattery: 'impressive'")
 
@@ -183,7 +180,7 @@ class TestCriticReview:
             })
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             passed, findings = analyze._critic_review(
                 {"evidence": {}}, {"summary": "x"}
             )
@@ -207,7 +204,7 @@ class TestCriticReview:
             })
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             passed, findings = analyze._critic_review(
                 {"evidence": {}}, {"summary": "x"}
             )
@@ -223,7 +220,7 @@ class TestCriticReview:
             message="rate limit", request=MagicMock(), body=None
         )
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             passed, findings = analyze._critic_review({}, {})
 
         assert passed is False
@@ -263,7 +260,7 @@ class TestAnalyzeCandidate:
 
         mock_client.messages.create.side_effect = side_effect
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             run = analyze.analyze_candidate(cid, database)
 
         assert run.critic_passed is True
@@ -295,7 +292,7 @@ class TestAnalyzeCandidate:
 
         mock_client.messages.create.side_effect = side_effect
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             run = analyze.analyze_candidate(cid, database)
 
         assert run.critic_passed is True
@@ -319,7 +316,7 @@ class TestAnalyzeCandidate:
 
         mock_client.messages.create.side_effect = side_effect
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             run = analyze.analyze_candidate(cid, database)
 
         assert run.critic_passed is False
@@ -329,7 +326,7 @@ class TestAnalyzeCandidate:
         """A candidate without evidence facts still goes through the loop;
         the analysis_run records evidence_fact_count=0. The API is mocked
         so no real network call is made."""
-        import config
+        from sniperscope import config
         original = config.SQLITE_PATH
         config.SQLITE_PATH = str(tmp_path / "empty.db")
         database = Database(str(tmp_path / "empty.db"))
@@ -351,7 +348,7 @@ class TestAnalyzeCandidate:
 
         mock_client.messages.create.side_effect = side_effect
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             run = analyze.analyze_candidate(cid, database)
 
         assert run.evidence_fact_count == 0
@@ -376,7 +373,7 @@ class TestAnalyzeCandidate:
 
         mock_client.messages.create.side_effect = side_effect
 
-        with patch("analyze.anthropic.Anthropic", return_value=mock_client):
+        with patch("sniperscope.analyze.anthropic.Anthropic", return_value=mock_client):
             run = analyze.analyze_candidate(cid, database)
 
         assert run.prompt_hash

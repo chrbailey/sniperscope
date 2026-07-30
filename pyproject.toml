@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sniperscope"
+version = "1.0.0"
+description = "Evidence-based talent radar — deterministic GitHub extraction, critic-validated Claude analysis"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Christopher Bailey" }]
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.31.0",
+    "anthropic>=0.40.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "responses>=0.25.0",
+]
+
+[project.scripts]
+# One console script per program. Extraction and analysis remain physically
+# separate executables — they share a database, never a process.
+sniperscope-extract = "sniperscope.extract:main"
+sniperscope-analyze = "sniperscope.analyze:main"
+sniperscope-crawl = "sniperscope.crawl:main"
+sniperscope-arxiv = "sniperscope.arxiv:main"
+
+[project.urls]
+Homepage = "https://github.com/chrbailey/sniperscope"
+
+[tool.setuptools]
+packages = ["sniperscope"]
+
+[tool.setuptools.package-data]
+sniperscope = ["schema.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

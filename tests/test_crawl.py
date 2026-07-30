@@ -5,17 +5,14 @@ Uses mocked GitHub client to avoid any real API calls.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import crawl  # noqa: E402
-from db import Database  # noqa: E402
-from models import Candidate  # noqa: E402
+from sniperscope import crawl
+from sniperscope.db import Database  # noqa: E402
+from sniperscope.models import Candidate  # noqa: E402
 
 
 @pytest.fixture
@@ -47,7 +44,7 @@ class TestCandidateRecentlyExtracted:
         assert crawl._candidate_recently_extracted(db, cid) is False
 
     def test_returns_true_after_recent_extraction(self, db):
-        from models import ExtractionRun
+        from sniperscope.models import ExtractionRun
         from datetime import datetime
 
         c = Candidate(github_id=1, github_login="user", discovered_via="manual")
@@ -117,7 +114,7 @@ class TestCrawlSeeds:
             "following": 0, "created_at": "2020-01-01",
         }
 
-        with patch("crawl._try_extract", return_value=False):
+        with patch("sniperscope.crawl._try_extract", return_value=False):
             result = crawl.crawl_seeds(db, mock_client, str(seeds_file))
 
         candidates = db.list_candidates()
@@ -137,7 +134,7 @@ class TestCrawlSeeds:
             "following": 0, "created_at": "2020-01-01",
         }
 
-        with patch("crawl._try_extract", return_value=False):
+        with patch("sniperscope.crawl._try_extract", return_value=False):
             # Run twice — second should not duplicate the candidate
             crawl.crawl_seeds(db, mock_client, str(seeds_file))
             crawl.crawl_seeds(db, mock_client, str(seeds_file))

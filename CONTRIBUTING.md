@@ -6,13 +6,13 @@ Thanks for looking. A few rules the project takes seriously.
 
 The point of this project is evidence-first evaluation. That means:
 
-- **Extraction must never call an LLM.** `extract.py`, `crawl.py`, `arxiv_search.py`, and `github_client.py` must not import `anthropic` or any other LLM SDK. If you need to derive something, derive it deterministically from the GitHub API response.
+- **Extraction must never call an LLM.** `sniperscope/extract.py`, `sniperscope/crawl.py`, `sniperscope/arxiv.py`, and `sniperscope/github.py` must not import `anthropic` or any other LLM SDK. If you need to derive something, derive it deterministically from the GitHub API response.
 
-- **Analysis must not access external sources.** `analyze.py` reads from the evidence database only. It does not call GitHub. It does not add context from the web. The prompt is the source code; the evidence JSON is the input; the output is constrained by the schema.
+- **Analysis must not access external sources.** `sniperscope/analyze.py` reads from the evidence database only. It does not call GitHub. It does not add context from the web. The prompt is the source code; the evidence JSON is the input; the output is constrained by the schema.
 
-- **The verifier checks analyses against evidence.** Any new violation category should extend the existing six categories in `prompts.py` or `analyze.py`, not replace them. Adding a new category requires a corresponding test.
+- **The verifier checks analyses against evidence.** Any new violation category should extend the existing six categories in `sniperscope/analyze.py`, not replace them. Adding a new category requires a corresponding test.
 
-- **`evidence_facts` is append-only, enforced by SQLite triggers.** Do not add an `update_fact` or `delete_fact` method to `db.py`. The schema enforces this at the database layer. If you need to correct a fact, insert a new fact with a later timestamp and a source of `correction:<run_id>`.
+- **`evidence_facts` is append-only, enforced by SQLite triggers.** Do not add an `update_fact` or `delete_fact` method to `sniperscope/db.py`. The schema enforces this at the database layer. If you need to correct a fact, insert a new fact with a later timestamp and a source of `correction:<run_id>`.
 
 - **No scoring, ranking, or numeric grading in analyses.** The verifier will reject it. Categorical severity only (none / low / medium / high).
 

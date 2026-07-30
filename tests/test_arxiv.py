@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 import responses
 
-import config
-from arxiv_search import (
+from sniperscope import config
+from sniperscope.arxiv import (
     ARXIV_API_URL,
     SEARCH_QUERIES,
     _build_query_url,
@@ -22,7 +22,7 @@ from arxiv_search import (
     search_arxiv,
     store_papers,
 )
-from models import EvidenceFact
+from sniperscope.models import EvidenceFact
 
 
 # ============================================================================

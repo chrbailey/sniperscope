@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 import responses
 
-from github_client import GitHubClient, GitHubRateLimitError
-import config
+from sniperscope.github import GitHubClient, GitHubRateLimitError
+from sniperscope import config
 
 
 BASE = config.GITHUB_API_BASE

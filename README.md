@@ -42,7 +42,7 @@ The extraction program has zero LLM calls. The analysis program only reads the e
 git clone https://github.com/chrbailey/sniperscope.git
 cd sniperscope
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e ".[dev]"
 
 cp .env.example .env
 # Add GITHUB_TOKEN (classic, public_repo + read:user scopes)
@@ -53,21 +53,24 @@ python -m pytest tests/ -q           # no real API calls, all local mocks
 
 ## Usage
 
+Each command is a separate program — extraction and analysis never share a
+process. That separation is the architecture, not a packaging accident.
+
 ```bash
 # Extract evidence for a GitHub user
-python extract.py --user <username>
+sniperscope-extract --user <username>
 
 # Crawl seed repos and extract all contributors
-python crawl.py --seeds seeds.json
+sniperscope-crawl --seeds
 
 # Discover new repos via GitHub search
-python crawl.py --search
+sniperscope-crawl --search
 
 # Analyze extracted candidates (verifier-loop validated)
-python analyze.py --unanalyzed
+sniperscope-analyze --unanalyzed
 
 # arXiv paper search + cross-reference to GitHub
-python arxiv_search.py --search --cross-ref-github
+sniperscope-arxiv --search --cross-ref-github
 ```
 
 ## Data Model

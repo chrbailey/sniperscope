@@ -3,15 +3,12 @@ diff_extractions (interview verification) and outcomes (training sidecar).
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db import Database  # noqa: E402
-from models import Candidate, EvidenceFact, ExtractionRun, Outcome  # noqa: E402
+from sniperscope.db import Database  # noqa: E402
+from sniperscope.models import Candidate, EvidenceFact, ExtractionRun, Outcome  # noqa: E402
 
 
 @pytest.fixture
